@@ -364,7 +364,9 @@ void gelu_forward(float* out, float* inp, int N) {
 }
 
 #ifdef __GNUC__
-  __attribute__((optimize("no-finite-math-only"))) 
+    #ifndef __clang__
+        __attribute__((optimize("no-finite-math-only"))) 
+    #endif
 #endif
 void gelu_backward(float* dinp, float* inp, float* dout, int N) {
     for (int i = 0; i < N; i++) {
