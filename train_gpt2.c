@@ -364,6 +364,7 @@ void gelu_forward(float* out, float* inp, int N) {
 }
 
 #if defined(__GNUC__) && !defined(__clang__)
+    // gcc -Ofast gives good boost, but breaks tanhf in gelu_backward, this omits -ffast-math for just this function
     __attribute__((optimize("no-finite-math-only"))) 
 #endif
 void gelu_backward(float* dinp, float* inp, float* dout, int N) {
