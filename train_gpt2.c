@@ -363,9 +363,13 @@ void gelu_forward(float* out, float* inp, int N) {
     }
 }
 
+// gcc -Ofast gives good boost, but breaks tanhf in gelu_backward, this omits -ffast-math for just this function
 #if defined(__GNUC__) && !defined(__clang__)
-    // gcc -Ofast gives good boost, but breaks tanhf in gelu_backward, this omits -ffast-math for just this function
     __attribute__((optimize("no-finite-math-only"))) 
+#endif
+// same for msvc /fp:fast 
+#if defined(_MSC_VER) 
+#pragma float_control(precise, on, push) 
 #endif
 void gelu_backward(float* dinp, float* inp, float* dout, int N) {
     for (int i = 0; i < N; i++) {
@@ -379,6 +383,9 @@ void gelu_backward(float* dinp, float* inp, float* dout, int N) {
         dinp[i] += local_grad * dout[i];
     }
 }
+#if defined(_MSC_VER) 
+#pragma float_control(pop) 
+#endif
 
 void residual_forward(float* out, float* inp1, float* inp2, int N) {
     for (int i = 0; i < N; i++) {
