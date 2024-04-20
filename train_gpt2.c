@@ -376,10 +376,35 @@ float xexpf(float x) {
     return z;
 }
 
+float exp_approx(float x) {
+    // Coefficients of a polynomial approximation (these are not optimized)
+    const float a0 = 1.0f;
+    const float a1 = 1.0f;
+    const float a2 = 0.5f;
+    const float a3 = 0.166667f; // 1/6
+    // Polynomial approximation: a0 + a1*x + a2*x^2 + a3*x^3
+    return a0 + x * (a1 + x * (a2 + x * a3));
+}
+float fast_xexpf(float x) {
+    if (x < 0) {
+        return 1.0 / fast_expf(-x);
+    }
+
+    // Range reduction
+    float n = floor(x / M_LN2);
+    float remainder = x - n * M_LN2;
+
+    // Use the approximation for the remainder
+    float approx = exp_approx(remainder);
+
+    // Scale back using exp(x) = exp(x - n*log(2)) * 2^n
+    return ldexp(approx, (int)n);
+}
+
 float coshf(float x) {
     // Use expf for single-precision exponential calculation
-    float expX = xexpf(x);
-    float expNegX = xexpf(-x);
+    float expX = fast_xexpf(x);
+    float expNegX = fast_xexpf(-x);
     
     // The hyperbolic cosine formula: (e^x + e^(-x)) / 2
     return (expX + expNegX) / 2.0f;
