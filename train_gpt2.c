@@ -353,6 +353,85 @@ void attention_backward(float* dinp, float* dpreatt, float* datt,
     }
 }
 
+
+#include <stdint.h>
+#include <float.h>
+
+#define GET_FLOAT_WORD(i,d) \
+do { \
+  union {float f; uint32_t i;} __u; \
+  __u.f = (d); \
+  (i) = __u.i; \
+} while (0)
+
+#define SET_FLOAT_WORD(d,i) \
+do { \
+  union {float f; uint32_t i;} __u; \
+  __u.i = (i); \
+  (d) = __u.f; \
+} while (0)
+
+static const float one = 1.0f, huge = 1e30f;
+static const float zero = 0.0f;
+
+#ifdef __STDC__
+#include <tgmath.h>
+#endif
+#define POLY_COEFF(n) (1.0f / ((n) + 1))
+
+float tanhf(float x)
+{
+    float t, z;
+    const float a0 = 2.0f / 3.0f;
+    const float a1 = 3.5302366407680179e-03f;
+    const float a2 = -1.2109070722864636e-04f;
+    const float a3 = 1.6016689298942598e-06f;
+    const float a4 = -6.9046286689724787e-09f;
+    const float a5 = 9.0518967957636908e-12f;
+
+    /* Highly accurate for small values of x.  */
+    if (fabsf(x) < 0.01f)
+    {
+        t = x * x;
+        z = a0 * x + t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))));
+    }
+    else
+    {
+        t = expf(-2.0f * fabsf(x));
+        z = (1.0f - t) / (1.0f + t);
+    }
+
+    if (x < 0.0f)
+        z = -z;
+
+    return z;
+}
+
+float coshf(float x)
+{
+    float t, z;
+    const float a0 = 0.5f;
+    const float a1 = 3.5302366407680179e-03f;
+    const float a2 = -1.2109070722864636e-04f;
+    const float a3 = 1.6016689298942598e-06f;
+    const float a4 = -6.9046286689724787e-09f;
+    const float a5 = 9.0518967957636908e-12f;
+
+    /* Highly accurate for small values of x.  */
+    if (fabsf(x) < 0.01f)
+    {
+        t = x * x;
+        z = a0 + t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))));
+    }
+    else
+    {
+        t = expf(fabsf(x));
+        z = (t + 1.0f / t) / 2.0f;
+    }
+
+    return z;
+}
+
 #define GELU_SCALING_FACTOR sqrtf(2.0f / M_PI)
 void gelu_forward(float* out, float* inp, int N) {
     // (approximate) GeLU elementwise non-linearity in the MLP block of Transformer
@@ -363,14 +442,7 @@ void gelu_forward(float* out, float* inp, int N) {
     }
 }
 
-// gcc -Ofast gives good boost, but breaks tanhf in gelu_backward, this omits -ffast-math for just this function
-#if defined(__GNUC__) && !defined(__clang__)
-    __attribute__((optimize("no-finite-math-only"))) 
-#endif
-// same for msvc /fp:fast 
-#if defined(_MSC_VER) 
-#pragma float_control(precise, on, push) 
-#endif
+__attribute__((optimize("no-finite-math-only")))
 void gelu_backward(float* dinp, float* inp, float* dout, int N) {
     for (int i = 0; i < N; i++) {
         float x = inp[i];
@@ -383,9 +455,6 @@ void gelu_backward(float* dinp, float* inp, float* dout, int N) {
         dinp[i] += local_grad * dout[i];
     }
 }
-#if defined(_MSC_VER) 
-#pragma float_control(pop) 
-#endif
 
 void residual_forward(float* out, float* inp1, float* inp2, int N) {
     for (int i = 0; i < N; i++) {
