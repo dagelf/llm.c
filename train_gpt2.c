@@ -353,58 +353,36 @@ void attention_backward(float* dinp, float* dpreatt, float* datt,
     }
 }
 
+__attribute__((optimize("no-finite-math-only")))
+float xexpf(float x) {
+    const float a0 = 1.0f;
+    const float a1 = 6.9314515230736766e-01f;
+    const float a2 = 2.4015361443847656e-01f;
+    const float a3 = 5.5395505192143417e-02f;
+    const float a4 = 9.6181182877138520e-03f;
+    const float a5 = 1.3333873200837517e-03f;
+    const float a6 = 1.5424917836922419e-04f;
+    const float a7 = 1.4801736002211084e-05f;
+    const float a8 = 1.1470326317007142e-06f;
+    const float a9 = 6.7608235559091186e-08f;
+    const float a10 = 2.7105054312137610e-09f;
+    const float a11 = 4.7794773323599968e-11f;
 
-#include <stdint.h>
-#include <float.h>
-
-#define GET_FLOAT_WORD(i,d) \
-do { \
-  union {float f; uint32_t i;} __u; \
-  __u.f = (d); \
-  (i) = __u.i; \
-} while (0)
-
-#define SET_FLOAT_WORD(d,i) \
-do { \
-  union {float f; uint32_t i;} __u; \
-  __u.i = (i); \
-  (d) = __u.f; \
-} while (0)
-
-static const float one = 1.0f, huge = 1e30f;
-static const float zero = 0.0f;
-
-#ifdef __STDC__
-#include <tgmath.h>
-#endif
-#define POLY_COEFF(n) (1.0f / ((n) + 1))
-
-float tanhf(float x)
-{
     float t, z;
-    const float a0 = 2.0f / 3.0f;
-    const float a1 = 3.5302366407680179e-03f;
-    const float a2 = -1.2109070722864636e-04f;
-    const float a3 = 1.6016689298942598e-06f;
-    const float a4 = -6.9046286689724787e-09f;
-    const float a5 = 9.0518967957636908e-12f;
 
-    /* Highly accurate for small values of x.  */
-    if (fabsf(x) < 0.01f)
-    {
-        t = x * x;
-        z = a0 * x + t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))));
-    }
-    else
-    {
-        t = expf(-2.0f * fabsf(x));
-        z = (1.0f - t) / (1.0f + t);
-    }
-
-    if (x < 0.0f)
-        z = -z;
+    t = 1.0f + x * (a1 + x * (a2 + x * (a3 + x * (a4 + x * (a5 + x * (a6 + x * (a7 + x * (a8 + x * (a9 + x * (a10 + x * a11))))))))));
+    z = t + 1.0f / t;
 
     return z;
+}
+
+float coshf(float x) {
+    // Use expf for single-precision exponential calculation
+    float expX = xexpf(x);
+    float expNegX = xexpf(-x);
+    
+    // The hyperbolic cosine formula: (e^x + e^(-x)) / 2
+    return (expX + expNegX) / 2.0f;
 }
 
 #define GELU_SCALING_FACTOR sqrtf(2.0f / M_PI)
@@ -417,7 +395,6 @@ void gelu_forward(float* out, float* inp, int N) {
     }
 }
 
-__attribute__((optimize("no-finite-math-only")))
 void gelu_backward(float* dinp, float* inp, float* dout, int N) {
     for (int i = 0; i < N; i++) {
         float x = inp[i];
