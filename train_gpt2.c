@@ -407,31 +407,6 @@ float tanhf(float x)
     return z;
 }
 
-float coshf(float x)
-{
-    float t, z;
-    const float a0 = 0.5f;
-    const float a1 = 3.5302366407680179e-03f;
-    const float a2 = -1.2109070722864636e-04f;
-    const float a3 = 1.6016689298942598e-06f;
-    const float a4 = -6.9046286689724787e-09f;
-    const float a5 = 9.0518967957636908e-12f;
-
-    /* Highly accurate for small values of x.  */
-    if (fabsf(x) < 0.01f)
-    {
-        t = x * x;
-        z = a0 + t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))));
-    }
-    else
-    {
-        t = expf(fabsf(x));
-        z = (t + 1.0f / t) / 2.0f;
-    }
-
-    return z;
-}
-
 #define GELU_SCALING_FACTOR sqrtf(2.0f / M_PI)
 void gelu_forward(float* out, float* inp, int N) {
     // (approximate) GeLU elementwise non-linearity in the MLP block of Transformer
