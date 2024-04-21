@@ -21,6 +21,13 @@ There will be other versions of this code that specialize it and make it fast.
 #include <omp.h>
 #endif
 
+#include <float.h>
+#define TABLE_SIZE 10240
+#define TABLE_RANGE 10000.0f
+
+float tanh_table[TABLE_SIZE];
+float cosh_table[TABLE_SIZE];
+
 // ----------------------------------------------------------------------------
 // all the individual layers' forward and backward passes
 // B = batch_size, T = sequence_length, C = channels, V = vocab_size
@@ -353,63 +360,6 @@ void attention_backward(float* dinp, float* dpreatt, float* datt,
     }
 }
 
-__attribute__((optimize("no-finite-math-only")))
-float xexpf(float x) {
-    const float a0 = 1.0f;
-    const float a1 = 6.9314515230736766e-01f;
-    const float a2 = 2.4015361443847656e-01f;
-    const float a3 = 5.5395505192143417e-02f;
-    const float a4 = 9.6181182877138520e-03f;
-    const float a5 = 1.3333873200837517e-03f;
-    const float a6 = 1.5424917836922419e-04f;
-    const float a7 = 1.4801736002211084e-05f;
-    const float a8 = 1.1470326317007142e-06f;
-    const float a9 = 6.7608235559091186e-08f;
-    const float a10 = 2.7105054312137610e-09f;
-    const float a11 = 4.7794773323599968e-11f;
-
-    float t, z;
-
-    t = 1.0f + x * (a1 + x * (a2 + x * (a3 + x * (a4 + x * (a5 + x * (a6 + x * (a7 + x * (a8 + x * (a9 + x * (a10 + x * a11))))))))));
-    z = t + 1.0f / t;
-
-    return z;
-}
-
-float exp_approx(float x) {
-    // Coefficients of a polynomial approximation (these are not optimized)
-    const float a0 = 1.0f;
-    const float a1 = 1.0f;
-    const float a2 = 0.5f;
-    const float a3 = 0.166667f; // 1/6
-    // Polynomial approximation: a0 + a1*x + a2*x^2 + a3*x^3
-    return a0 + x * (a1 + x * (a2 + x * a3));
-}
-float fast_xexpf(float x) {
-    if (x < 0) {
-        return 1.0 / fast_expf(-x);
-    }
-
-    // Range reduction
-    float n = floor(x / M_LN2);
-    float remainder = x - n * M_LN2;
-
-    // Use the approximation for the remainder
-    float approx = exp_approx(remainder);
-
-    // Scale back using exp(x) = exp(x - n*log(2)) * 2^n
-    return ldexp(approx, (int)n);
-}
-
-float coshf(float x) {
-    // Use expf for single-precision exponential calculation
-    float expX = fast_xexpf(x);
-    float expNegX = fast_xexpf(-x);
-    
-    // The hyperbolic cosine formula: (e^x + e^(-x)) / 2
-    return (expX + expNegX) / 2.0f;
-}
-
 #define GELU_SCALING_FACTOR sqrtf(2.0f / M_PI)
 void gelu_forward(float* out, float* inp, int N) {
     // (approximate) GeLU elementwise non-linearity in the MLP block of Transformer
@@ -420,10 +370,45 @@ void gelu_forward(float* out, float* inp, int N) {
     }
 }
 
+void leaky_relu_forward(float* out, float* inp, int N) {
+    for (int i = 0; i < N; i++) {
+        float x = inp[i];
+        out[i] = x > 0 ? x : 0.01f * x;
+    }
+}
+
 // we want to use -Ofast optimization, but sadly GeLU breaks, so disable this flag just for it (#168)
 #pragma float_control(precise, on, push) // On msvc /fp:fast is a lot faster, but the expf inside coshf breaks the model
 __attribute__((optimize("no-finite-math-only"))) // same for gcc -Ofast
 void gelu_backward(float* dinp, float* inp, float* dout, int N) {
+float min_tanh_arg = FLT_MAX;
+float max_tanh_arg = -FLT_MAX;
+
+    for (int i = 0; i < N; i++) {
+        float x = inp[i];
+        float cube = 0.044715f * x * x * x;
+        float tanh_arg = GELU_SCALING_FACTOR * (x + cube);
+    if (tanh_arg < min_tanh_arg) {
+        min_tanh_arg = tanh_arg;
+    }
+    if (tanh_arg > max_tanh_arg) {
+        max_tanh_arg = tanh_arg;
+    }
+
+        float tanh_out = tanhf(tanh_arg);
+        float coshf_out = coshf(tanh_arg);
+        float sech_out = 1.0f / (coshf_out * coshf_out);
+        float local_grad = 0.5f * (1.0f + tanh_out) + x * 0.5f * sech_out * GELU_SCALING_FACTOR * (1.0f + 3.0f * 0.044715f * x * x);
+        dinp[i] += local_grad * dout[i];
+    }
+printf("Min tanh_arg: %f\n", min_tanh_arg);
+printf("Max tanh_arg: %f\n", max_tanh_arg);
+}
+#pragma float_control(pop)
+
+__attribute__((optimize("no-finite-math-only"))) // same for gcc -Ofast
+void gelu_backward_omp(float* dinp, float* inp, float* dout, int N) {
+    #pragma omp parallel for
     for (int i = 0; i < N; i++) {
         float x = inp[i];
         float cube = 0.044715f * x * x * x;
@@ -435,7 +420,61 @@ void gelu_backward(float* dinp, float* inp, float* dout, int N) {
         dinp[i] += local_grad * dout[i];
     }
 }
-#pragma float_control(pop)
+
+void gelu_backward_lookups(float* dinp, float* inp, float* dout, int N) {
+float min_tanh_arg = FLT_MAX;
+float max_tanh_arg = -FLT_MAX;
+
+    for (int i = 0; i < N; i++) {
+        float x = inp[i];
+        float cube = 0.044715f * x * x * x;
+        float tanh_arg = x + cube; // * GELU_SCALING_FACTOR already in the table
+
+        // Use the lookup tables to approximate tanh and cosh
+        int index = (int)((tanh_arg + TABLE_RANGE / 2.0f) / (TABLE_RANGE / (TABLE_SIZE - 1)));
+
+    if (tanh_arg < min_tanh_arg) {
+        min_tanh_arg = tanh_arg;
+    }
+    if (tanh_arg > max_tanh_arg) {
+        max_tanh_arg = tanh_arg;
+    }
+
+	index = index < 0 ? 0 : index;
+	index = index >= TABLE_SIZE ? TABLE_SIZE - 1 : index;
+
+        float tanh_out = tanh_table[index];
+        float cosh_out = cosh_table[index];
+
+        float sech_out = 1.0f / (cosh_out * cosh_out);
+        float local_grad = 0.5f * (1.0f + tanh_out) + x * 0.5f * sech_out * GELU_SCALING_FACTOR * (1.0f + 3.0f * 0.044715f * x * x);
+        dinp[i] += local_grad * dout[i];
+    }
+printf("Min tanh_arg: %f\n", min_tanh_arg);
+printf("Max tanh_arg: %f\n", max_tanh_arg);
+
+}
+
+void gelu_backward_lookups2(float* dinp, float* inp, float* dout, int N) {
+    for (int i = 0; i < N; i++) {
+        float x = inp[i];
+        float cube = 0.044715f * x * x * x;
+        float tanh_arg = x + cube; // * GELU_SCALING_FACTOR already in the table
+
+int index = (int)(tanh_arg / (TABLE_RANGE / (TABLE_SIZE - 1)));
+//      index = index < 0 ? 0 : index;
+//      index = index >= TABLE_SIZE ? TABLE_SIZE - 1 : index;
+
+        float tanh_out = tanh_table[index];
+        float sech_out = cosh_table[index];
+
+        float local_grad = 0.5f * (1.0f + tanh_out) + x * 0.5f * sech_out * (1.0f + 3.0f * 0.044715f * x * x);
+	dinp[i] += local_grad * dout[i];
+    }
+}
+
+
+
 
 void residual_forward(float* out, float* inp1, float* inp2, int N) {
     for (int i = 0; i < N; i++) {
@@ -838,6 +877,7 @@ void gpt2_forward(GPT2 *model, int* inputs, int* targets, int B, int T) {
         residual_forward(l_residual2, residual, l_attproj, B*T*C);
         layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
         matmul_forward(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4*C);
+        //leaky_relu_forward(l_fch_gelu, l_fch, B*T*4*C);
         gelu_forward(l_fch_gelu, l_fch, B*T*4*C);
         matmul_forward(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4*C, C);
         residual_forward(l_residual3, l_residual2, l_fcproj, B*T*C);
@@ -962,7 +1002,9 @@ void gpt2_backward(GPT2 *model) {
         // backprop this layer
         residual_backward(dl_residual2, dl_fcproj, dl_residual3, B*T*C);
         matmul_backward(dl_fch_gelu, dl_fcprojw, dl_fcprojb, dl_fcproj, l_fch_gelu, l_fcprojw, B, T, 4*C, C);
-        gelu_backward(dl_fch, l_fch, dl_fch_gelu, B*T*4*C);
+        //gelu_backward(dl_fch, l_fch, dl_fch_gelu, B*T*4*C);
+        //gelu_backward_lookups(dl_fch, l_fch, dl_fch_gelu, B*T*4*C);
+        gelu_backward_lookups2(dl_fch, l_fch, dl_fch_gelu, B*T*4*C);
         matmul_backward(dl_ln2, dl_fcw, dl_fcb, dl_fch, l_ln2, l_fcw, B, T, C, 4*C);
         layernorm_backward(dl_residual2, dl_ln2w, dl_ln2b, dl_ln2, l_residual2, l_ln2w, l_ln2_mean, l_ln2_rstd, B, T, C);
         residual_backward(dresidual, dl_attproj, dl_residual2, B*T*C);
@@ -1197,10 +1239,20 @@ void tokenizer_free(Tokenizer *tokenizer) {
     }
 }
 
+
 // ----------------------------------------------------------------------------
 // main training loop
 int main() {
 
+    // Load the lookup tables from files
+    FILE* tanh_file = fopen("tanh_table.bin", "rb");
+    fread(tanh_table, sizeof(float), TABLE_SIZE, tanh_file);
+    fclose(tanh_file);
+
+    FILE* cosh_file = fopen("cosh_table.bin", "rb");
+    fread(cosh_table, sizeof(float), TABLE_SIZE, cosh_file);
+    fclose(cosh_file);
+    
     // build the GPT-2 model from a checkpoint
     GPT2 model;
     gpt2_build_from_checkpoint(&model, "gpt2_124M.bin");
