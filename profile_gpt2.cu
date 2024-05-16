@@ -25,7 +25,11 @@ the profile.ncu-rep from a cloud box to local to pretty view.
 */
 
 #define TESTING
+#ifdef BUILD_AMD
+#include "train_gpt2.hip"
+#else
 #include "train_gpt2.cu"
+#endif
 
 int main(int argc, char *argv[]) {
     char nccl_init_method[256] = "mpi";  // "tcp" or "fs" or "mpi"
