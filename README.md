@@ -1,3 +1,36 @@
+# llm.c for AMD devices
+This is a fork of [Andrej Karpathy's llm.c](https://github.com/karpathy/llm.c) with support for AMD devices. 
+
+## Performance
+
+With default settings on a single 7900 XTX, a training step is currently at ~79ms, compared to ~97ms for PyTorch nightly (2.4.0.dev20240513), and ~440ms for tinygrad.
+
+For multiple GPU training, on a machine with four 7900 XTX, throughput is at ~210,000 tokens per second. 
+
+## Status
+
+- [x] train_gpt2_fp32 (baseline, minimal changes)
+- [x] train_gpt2 with BF16 (baseline, minimal changes)
+- [x] train_gpt2 with BF16 and multiple GPUs
+- [ ] RDNA3 optimized kernels (in progress)
+- [ ] CDNA3 optimized kernels
+
+## Quick Start (AMD targets)
+
+Install ROCm 6.1.1, checkout the repo, and perform the following steps:
+
+```
+pip install -r requirements.txt
+python prepro_tinyshakespeare.py
+python train_gpt2.py
+make train_gpt2amd
+./train_gpt2amd
+```
+
+---
+[ORIGINAL README]
+---
+
 # llm.c
 
 LLMs in simple, pure C/CUDA with no need for 245MB of PyTorch or 107MB of cPython. Current focus is on pretraining, in particular reproducing the [GPT-2](https://github.com/openai/gpt-2) and [GPT-3](https://arxiv.org/abs/2005.14165) miniseries, along with a parallel PyTorch reference implementation in [train_gpt2.py](train_gpt2.py). You'll recognize this file as a slightly tweaked [nanoGPT](https://github.com/karpathy/nanoGPT), an earlier project of mine. Currently, llm.c is a bit faster than PyTorch Nightly (by about 7%). In addition to the bleeding edge mainline code in [train_gpt2.cu](train_gpt2.cu), we have a simple reference CPU fp32 implementation in ~1,000 lines of clean code in one file [train_gpt2.c](train_gpt2.c). I'd like this repo to only maintain C and CUDA code. Ports to other languages or repos are very welcome, but should be done in separate repos, and I am happy to link to them below in the "notable forks" section. Developer coordination happens in the [Discussions](https://github.com/karpathy/llm.c/discussions) and on Discord, either the `#llmc` channel on the [Zero to Hero](https://discord.gg/3zy8kqD9Cp) channel, or on `#llmdotc` on CUDA MODE Discord.
