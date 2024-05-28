@@ -7,6 +7,8 @@ With default settings on a single 7900 XTX, a training step is currently at ~79m
 
 For multiple GPU training, on a machine with four 7900 XTX, throughput is at ~210,000 tokens per second. 
 
+Update (5/28/24): Fast attention branch down to 58.340831 ms / training step on single 7900 XTX, or 318777 tok/s on 4x 7900 XTX.. currently working on double buffering to push it even further. 
+
 ## Status
 
 - [x] train_gpt2_fp32 (baseline, minimal changes)
