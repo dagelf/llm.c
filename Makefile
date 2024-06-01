@@ -59,9 +59,11 @@ endif
 
 # AMD flags
 ROCM_PATH ?= /opt/rocm
+AMDGPU_TARGETS ?= $(shell $(ROCM_PATH)/llvm/bin/amdgpu-arch)
 HIPCC := $(shell which hipcc 2>/dev/null)
 HIPIFY := $(shell which hipify-perl 2>/dev/null)
-HIPCC_FLAGS = -O3 -march=native --offload-arch=native -mcumode
+HIPCC_FLAGS = -O3 -march=native
+HIPCC_FLAGS += $(addprefix --offload-arch=,$(AMDGPU_TARGETS))
 HIPCC_LDFLAGS = -lhipblas -lhipblaslt -lamdhip64 -ldevice_gemm_operations -lutility -ldevice_other_operations
 REMOVE_FILES += *.hip
 ifneq ($(NO_MULTI_GPU), 1)
