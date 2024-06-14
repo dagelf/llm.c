@@ -39,7 +39,7 @@ static constexpr auto GemmSpec = ck::tensor_operation::device::GemmSpecializatio
 // somewhat janky to invoke with all of the templating, but works..
 static inline void matmul_forward_gfx11(hip_bfloat16* out,
                    const hip_bfloat16* inp, const hip_bfloat16* weight, const hip_bfloat16* bias,
-                   int B, int T, int C, int OC) {
+                   int B, int T, int C, int OC, cudaStream_t stream) {
     using AElementOp = ck::tensor_operation::element_wise::PassThrough;
     using BElementOp = ck::tensor_operation::element_wise::PassThrough;
     using CElementOp = ck::tensor_operation::element_wise::PassThrough;
@@ -106,7 +106,7 @@ static inline void matmul_forward_gfx11(hip_bfloat16* out,
             a_element_op,
             b_element_op,
             c_element_op);
-        invoker.Run(argument);
+        invoker.Run(argument, StreamConfig{stream});
     } else {
         auto device_op = ck::tensor_operation::device::DeviceGemmMultipleD_Wmma_CShuffle <
             ck::tensor_layout::gemm::RowMajor,
@@ -166,7 +166,7 @@ static inline void matmul_forward_gfx11(hip_bfloat16* out,
             a_element_op,
             b_element_op,
             cde_element_op);
-        invoker.Run(argument);
+        invoker.Run(argument, StreamConfig{stream});
     }
 }
 
@@ -219,6 +219,10 @@ static inline void matmul_forward_gfx11(hip_bfloat16* out,
 #define hipProfilerStop(x) hipSuccess
 #define nvtxRangePush(x) {}
 #define nvtxRangePop(x) {}
+#define nvtxNameCudaStreamA(x,y) {}
+#define cublasSetWorkspace(x,y,z) HIPBLAS_STATUS_SUCCESS
+#define nvtxNameCudaEventA(x,y) {}
+#define cudaStreamWaitEvent(x,y) hipStreamWaitEvent(x,y,0)
 
 static __device__ __forceinline__ hip_bfloat16 __float2bfloat16_rn(float f) {
     return hip_bfloat16::round_to_bfloat16(f);
