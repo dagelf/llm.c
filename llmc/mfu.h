@@ -78,7 +78,7 @@ static GPUEntry gpu_db[] = {
     {"NVIDIA H100 PCIe", &HOPPER, 456, 1620},
     {"NVIDIA H100 80GB HBM3", &HOPPER, 528, 1830}, // HBM3 = SXM5
     {"Radeon RX 7900 XTX", &RDNA3, 384, 2500},
-    {"AMD Instinct MI250X/MI250", &CDNA2, 383, 1690},
+    {"AMD Instinct MI250X/MI250", &CDNA2, 208, 1690},
 };
 
 float get_flops_promised(const char* device, int precision_mode) {
