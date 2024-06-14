@@ -190,7 +190,7 @@ void matmul_backward(floatX* dinp, floatX* dweight, floatX* dbias,
 
         const int block_size = deviceProp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
 
-        dim3 block_dim = {4, 8, (unsigned)block_size/WARP_SIZE};
+        dim3 block_dim = {4, WARP_SIZE/4, (unsigned)block_size/WARP_SIZE};
         const int OC_per_warp = block_dim.y * x128::size; // 64 at BF16
         const int grid_size_x = CEIL_DIV(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
         const int grid_size_y = max(1, deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
