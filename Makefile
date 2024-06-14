@@ -70,6 +70,15 @@ ifneq ($(filter gfx1100,$(AMDGPU_TARGETS)),)
 else
   HIPCC_FLAGS += -DDISABLE_CK
 endif
+ifdef DISABLE_CK
+  HIPCC_FLAGS += -DDISABLE_CK
+endif
+ifdef WAVEFRONTSIZE64
+  HIPCC_FLAGS += -DWAVEFRONTSIZE64 -mwavefrontsize64
+endif
+ifdef CUMODE
+  HIPCC_FLAGS += -mcumode
+endif
 ifneq ($(NO_MULTI_GPU), 1)
   ifeq ($(shell [ -d /usr/lib/x86_64-linux-gnu/openmpi/lib/ ] && [ -d /usr/lib/x86_64-linux-gnu/openmpi/include/ ] && echo "exists"), exists)
     HIPCC_FLAGS += -I/usr/lib/x86_64-linux-gnu/openmpi/include -DMULTI_GPU
