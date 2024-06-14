@@ -4,73 +4,6 @@ Goal: unobtrusively provide support for AMD devices with minimal changes to the 
 
 Example (assuming ROCm 6.1.1 installed in /opt/rocm, or ROCM_PATH environment variable is set):
 
-$ make train_gpt2amd
-[...]
-$ ./train_gpt2amd
-+-----------------------+----------------------------------------------------+
-| Parameter             | Value                                              |
-+-----------------------+----------------------------------------------------+
-| input dataset prefix  | data/tiny_shakespeare                              |
-| output log file       | NULL                                               |
-| batch size B          | 4                                                  |
-| sequence length T     | 1024                                               |
-| learning rate         | 3.000000e-04                                       |
-| max_steps             | -1                                                 |
-| val_loss_every        | 20                                                 |
-| val_max_batches       | 20                                                 |
-| sample_every          | 20                                                 |
-| genT                  | 64                                                 |
-| overfit_single_batch  | 0                                                  |
-| use_master_weights    | enabled                                            |
-+-----------------------+----------------------------------------------------+
-| device                | Radeon RX 7900 XTX                                 |
-| precision             | BF16                                               |
-+-----------------------+----------------------------------------------------+
-[...]
-step    1/74: train loss 4.341256 (acc 4.341256) (173.484512 ms, 23610.175781 tok/s)
-step    2/74: train loss 4.520747 (acc 4.520747) (84.588364 ms, 48422.726562 tok/s)
-step    3/74: train loss 4.451268 (acc 4.451268) (82.094826 ms, 49176.976562 tok/s)
-step    4/74: train loss 3.973935 (acc 3.973935) (81.191582 ms, 49622.757812 tok/s)
-step    5/74: train loss 3.607177 (acc 3.607177) (80.539436 ms, 49955.472656 tok/s)
-step    6/74: train loss 3.799689 (acc 3.799689) (79.265457 ms, 50335.402344 tok/s)
-step    7/74: train loss 3.582036 (acc 3.582036) (79.510399 ms, 50558.101562 tok/s)
-step    8/74: train loss 3.721121 (acc 3.721121) (81.067596 ms, 50552.734375 tok/s)
-step    9/74: train loss 3.335243 (acc 3.335243) (79.859634 ms, 50662.250000 tok/s)
-step   10/74: train loss 3.452644 (acc 3.452644) (80.037292 ms, 50731.734375 tok/s)
-[...]
-$ mpirun -np 4 ./train_gpt2amd -i data/TinyStories -b 16
-+-----------------------+----------------------------------------------------+
-| Parameter             | Value                                              |
-+-----------------------+----------------------------------------------------+
-| input dataset prefix  | data/TinyStories                                   |
-| output log file       | NULL                                               |
-| batch size B          | 16                                                 |
-| sequence length T     | 1024                                               |
-| learning rate         | 3.000000e-04                                       |
-| max_steps             | -1                                                 |
-| val_loss_every        | 20                                                 |
-| val_max_batches       | 20                                                 |
-| sample_every          | 20                                                 |
-| genT                  | 64                                                 |
-| overfit_single_batch  | 0                                                  |
-| use_master_weights    | enabled                                            |
-+-----------------------+----------------------------------------------------+
-| device                | Radeon RX 7900 XTX                                 |
-| precision             | BF16                                               |
-+-----------------------+----------------------------------------------------+
-[...]
-step    1/14124: train loss 2.412066 (acc 2.374867) (407.426697 ms, 160853.468750 tok/s)
-step    2/14124: train loss 3.324505 (acc 3.278165) (309.399994 ms, 211816.375000 tok/s)
-step    3/14124: train loss 2.373110 (acc 2.390506) (311.514404 ms, 211079.062500 tok/s)
-step    4/14124: train loss 2.189030 (acc 2.220984) (311.049500 ms, 210943.765625 tok/s)
-step    5/14124: train loss 2.183907 (acc 2.187199) (310.421326 ms, 210991.140625 tok/s)
-step    6/14124: train loss 2.131746 (acc 2.131070) (310.315399 ms, 211035.421875 tok/s)
-step    7/14124: train loss 2.054895 (acc 2.078254) (311.606201 ms, 210899.796875 tok/s)
-step    8/14124: train loss 2.019783 (acc 2.047217) (311.635284 ms, 210799.890625 tok/s)
-step    9/14124: train loss 2.060214 (acc 2.049447) (310.942780 ms, 210794.750000 tok/s)
-step   10/14124: train loss 1.991402 (acc 1.970346) (312.162140 ms, 210679.437500 tok/s)
-[...]
-
 */
 
 #pragma once
@@ -80,7 +13,17 @@ step   10/14124: train loss 1.991402 (acc 1.970346) (312.162140 ms, 210679.43750
 #include <rccl/rccl.h>
 #endif
 
+#if defined(__gfx1100__) || defined(__gfx1103__)
+#define AMD_TARGET_ARCH_RDNA3
+#elif defined(__gfx90a__)
+#define AMD_TARGET_ARCH_CDNA2
+#elif defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__)
+#define AMD_TARGET_ARCH_CDNA3
+#endif
+
 #include <hip/hip_bfloat16.h>
+
+#ifndef DISABLE_CK
 
 #include "ck/tensor_operation/gpu/device/impl/device_gemm_multiple_d_wmma_cshuffle.hpp"
 #include "ck/tensor_operation/gpu/device/impl/device_gemm_wmma.hpp"
@@ -227,6 +170,8 @@ static inline void matmul_forward_gfx11(hip_bfloat16* out,
     }
 }
 
+#endif
+
 #include <hip/hip_runtime.h>
 #include <hipblas/hipblas.h>
 #include <hip/hip_fp16.h>
@@ -324,7 +269,7 @@ static __device__ __forceinline__ hip_bfloat16 patched_ldcs(const hip_bfloat16 *
     return *addr;
 }
 
-// emulate CG for old train_gpt2_fp32:
+#if defined(AMD_TARGET_ARCH_RDNA3)
 static __device__ __forceinline__ float warp_reduce_sum(float x) {
     asm volatile ("ds_swizzle_b32 v1, %0 offset:swizzle(SWAP,16) \n"\
                   "s_waitcnt lgkmcnt(0) \n"\
@@ -352,6 +297,23 @@ static __device__ __forceinline__ float warp_reduce_max(float x) {
                   : "+v"(x) : : "v1");
     return x;
 }
+#else
+static __device__ __forceinline__ float warp_reduce_sum(float x) {
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        x += __shfl_xor_sync(0xffffffff, x, mask, 32);
+    }
+    return x;
+}
+
+static __device__ __forceinline__ float warp_reduce_max(float x) {
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        x = fmaxf(x, __shfl_xor_sync(0xffffffff, x, mask, 32));
+    }
+    return x;
+}
+#endif
 
 namespace cooperative_groups {
 template <typename T>

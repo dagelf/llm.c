@@ -62,16 +62,21 @@ ROCM_PATH ?= /opt/rocm
 AMDGPU_TARGETS ?= $(shell $(ROCM_PATH)/llvm/bin/amdgpu-offload-arch)
 HIPCC := $(shell which hipcc 2>/dev/null)
 HIPIFY := $(shell which hipify-perl 2>/dev/null)
-HIPCC_FLAGS = -O3 -march=native
+HIPCC_FLAGS = -O3 -march=native -I$(BUILD_DIR)/hip
 HIPCC_FLAGS += $(addprefix --offload-arch=,$(AMDGPU_TARGETS))
-HIPCC_LDFLAGS = -lhipblas -lhipblaslt -lamdhip64 -ldevice_gemm_operations -lutility -ldevice_other_operations
-REMOVE_FILES += *.hip
+HIPCC_LDFLAGS = -lhipblas -lhipblaslt -lamdhip64
+ifneq ($(filter gfx1100,$(AMDGPU_TARGETS)),)
+  HIPCC_LDFLAGS += -ldevice_gemm_operations -lutility -ldevice_other_operations
+else
+  HIPCC_FLAGS += -DDISABLE_CK
+endif
 ifneq ($(NO_MULTI_GPU), 1)
   ifeq ($(shell [ -d /usr/lib/x86_64-linux-gnu/openmpi/lib/ ] && [ -d /usr/lib/x86_64-linux-gnu/openmpi/include/ ] && echo "exists"), exists)
     HIPCC_FLAGS += -I/usr/lib/x86_64-linux-gnu/openmpi/include -DMULTI_GPU
     HIPCC_LDFLAGS += -L/usr/lib/x86_64-linux-gnu/openmpi/lib/ -lmpi -lrccl
   endif
 endif
+AMD_HEADERS = $(addprefix $(BUILD_DIR)/hip/,$(wildcard llmc/*h))
 
 # autodect a lot of various supports on current platform
 $(info ---------------------------------------------)
@@ -204,39 +209,25 @@ else
   endif
 endif
 
-# Check if NCCL is available, include if so, for multi-GPU training
+# Check if OpenMPI and NCCL are available, include them if so, for multi-GPU training
 ifeq ($(NO_MULTI_GPU), 1)
-  $(info → Multi-GPU (NCCL) is manually disabled)
+  $(info → Multi-GPU (OpenMPI + NCCL) is manually disabled)
 else
   ifneq ($(OS), Windows_NT)
     # Detect if running on macOS or Linux
     ifeq ($(SHELL_UNAME), Darwin)
-      $(info ✗ Multi-GPU on CUDA on Darwin is not supported, skipping NCCL support)
-    else ifeq ($(shell dpkg -l | grep -q nccl && echo "exists"), exists)
-      $(info ✓ NCCL found, OK to train with multiple GPUs)
+      $(info ✗ Multi-GPU on CUDA on Darwin is not supported, skipping OpenMPI + NCCL support)
+    else ifeq ($(shell [ -d /usr/lib/x86_64-linux-gnu/openmpi/lib/ ] && [ -d /usr/lib/x86_64-linux-gnu/openmpi/include/ ] && echo "exists"), exists)
+      $(info ✓ OpenMPI found, OK to train with multiple GPUs)
+      NVCC_INCLUDES += -I/usr/lib/x86_64-linux-gnu/openmpi/include
+      NVCC_LDFLAGS += -L/usr/lib/x86_64-linux-gnu/openmpi/lib/
+      NVCC_LDLIBS += -lmpi -lnccl
       NVCC_FLAGS += -DMULTI_GPU
-      NVCC_LDLIBS += -lnccl
     else
-      $(info ✗ NCCL is not found, disabling multi-GPU support)
-      $(info ---> On Linux you can try install NCCL with `sudo apt install libnccl2 libnccl-dev`)
+      $(info ✗ OpenMPI is not found, disabling multi-GPU support)
+      $(info ---> On Linux you can try install OpenMPI with `sudo apt install openmpi-bin openmpi-doc libopenmpi-dev`)
     endif
   endif
-endif
-
-# Attempt to find and include OpenMPI on the system
-OPENMPI_DIR ?= /usr/lib/x86_64-linux-gnu/openmpi
-OPENMPI_LIB_PATH = $(OPENMPI_DIR)/lib/
-OPENMPI_INCLUDE_PATH = $(OPENMPI_DIR)/include/
-ifeq ($(NO_USE_MPI), 1)
-  $(info → MPI is manually disabled)
-else ifeq ($(shell [ -d $(OPENMPI_LIB_PATH) ] && [ -d $(OPENMPI_INCLUDE_PATH) ] && echo "exists"), exists)
-  $(info ✓ MPI enabled)
-  NVCC_INCLUDES += -I$(OPENMPI_INCLUDE_PATH)
-  NVCC_LDFLAGS += -L$(OPENMPI_LIB_PATH)
-  NVCC_LDLIBS += -lmpi
-  NVCC_FLAGS += -DUSE_MPI
-else
-  $(info ✗ MPI not found)
 endif
 
 # Precision settings, default to bf16 but ability to override
@@ -304,21 +295,28 @@ test_gpt2fp32cu: test_gpt2_fp32.cu
 profile_gpt2cu: profile_gpt2.cu $(NVCC_CUDNN)
 	$(NVCC) $(NVCC_FLAGS) $(PFLAGS) -lineinfo $^ $(NVCC_LDFLAGS) $(NVCC_INCLUDES) $(NVCC_LDLIBS)  $(CUDA_OUTPUT_FILE)
 
-%.hip: %.cu
+### AMD builds:
+
+$(BUILD_DIR)/hip/llmc/%h: llmc/%h
+	@mkdir -p $(dir $@)
 	$(HIPIFY) -quiet-warnings $< -o $@
 
-%amd: %.hip amd_support.h
+amd_headers: $(AMD_HEADERS)
+
+$(BUILD_DIR)/hip/%.cu: %.cu
+	@mkdir -p $(dir $@)
+	$(HIPIFY) -quiet-warnings $< -o $@
+
+%amd: $(BUILD_DIR)/hip/%.cu amd_headers
 	$(HIPCC) $(HIPCC_FLAGS) $(PFLAGS) $< $(HIPCC_LDFLAGS) -o $@
 
-profile_gpt2amd: profile_gpt2.hip train_gpt2.hip amd_support.h
+profile_gpt2amd: $(BUILD_DIR)/hip/profile_gpt2.cu $(BUILD_DIR)/hip/train_gpt2.cu amd_headers
 	$(HIPCC) $(HIPCC_FLAGS) $(PFLAGS) $< $(HIPCC_LDFLAGS) -o $@
 
-test_gpt2amd: test_gpt2.hip train_gpt2.hip amd_support.h
-	$(HIPCC) $(HIPCC_FLAGS) $(PFLAGS) $< $(HIPCC_LDFLAGS) -o $@
-
-test_gpt2_fp32amd: test_gpt2_fp32.hip train_gpt2_fp32.hip amd_support.h
+test_gpt2amd: $(BUILD_DIR)/hip/test_gpt2.cu $(BUILD_DIR)/hip/train_gpt2.cu amd_headers
 	$(HIPCC) $(HIPCC_FLAGS) $(PFLAGS) $< $(HIPCC_LDFLAGS) -o $@
 
 clean:
-	$(REMOVE_FILES) $(TARGETS)
+	$(REMOVE_FILES) $(TARGETS) 
 	$(REMOVE_BUILD_OBJECT_FILES)
+	rm -rf $(BUILD_DIR)/hip
