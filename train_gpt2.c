@@ -1041,14 +1041,14 @@ void gpt2_free(GPT2 *model) {
 // ----------------------------------------------------------------------------
 // sampler
 
-unsigned int random_u32(unsigned long long *state) {
+unsigned int random_u32(uint64_t *state) {
     // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
     *state ^= *state >> 12;
     *state ^= *state << 25;
     *state ^= *state >> 27;
     return (*state * 0x2545F4914F6CDD1Dull) >> 32;
 }
-float random_f32(unsigned long long *state) { // random float32 in [0,1)
+float random_f32(uint64_t *state) { // random float32 in [0,1)
     return (random_u32(state) >> 8) / 16777216.0f;
 }
 
@@ -1083,8 +1083,8 @@ int main() {
     int B = 4; // batch size 4 (i.e. 4 independent token sequences will be trained on)
     int T = 64; // sequence length 64 (i.e. each sequence is 64 tokens long). must be <= maxT, which is 1024 for GPT-2
     DataLoader train_loader, val_loader;
-    dataloader_init(&train_loader, train_tokens, B, T, 0, 1);
-    dataloader_init(&val_loader, val_tokens, B, T, 0, 1);
+    dataloader_init(&train_loader, train_tokens, B, T, 0, 1, 1);
+    dataloader_init(&val_loader, val_tokens, B, T, 0, 1, 0);
     printf("train dataset num_batches: %zu\n", train_loader.num_tokens / (B*T));
     printf("val dataset num_batches: %zu\n", val_loader.num_tokens / (B*T));
     int val_num_batches = 5;
@@ -1094,7 +1094,7 @@ int main() {
     tokenizer_init(&tokenizer, "gpt2_tokenizer.bin");
 
     // some memory for generating samples from the model
-    unsigned long long rng_state = 1337;
+    uint64_t rng_state = 1337;
     int* gen_tokens = (int*)mallocCheck(B * T * sizeof(int));
     const int genT = 64; // number of steps of inference we will do
 
